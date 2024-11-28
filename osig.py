@@ -8,10 +8,6 @@ import google.generativeai as genai
 openai_api_key = st.secrets["openai_api_key"]
 google_api_key = st.secrets["google_api_key"]
 
-if not api_key:
-    raise ValueError("OpenAI API key not found.")
-client = OpenAI(api_key=api_key)
-
 if not openai_api_key:
     raise ValueError("OpenAI API key not found.")
 if not google_api_key:
