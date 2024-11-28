@@ -5,7 +5,7 @@ import streamlit as st
 import google.generativeai as genai
 
 # Read the API key from Streamlit secrets
-openai_api_key = st.secrets["open_api_key"]
+openai_api_key = st.secrets["openai_api_key"]
 google_api_key = st.secrets["gemini_api_key"]
 
 if not api_key:
