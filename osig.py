@@ -6,21 +6,48 @@ import os
 import streamlit as st
 
 # Read the API key from Streamlit secrets
-api_key = st.secrets["api_key"]
+openai_api_key = st.secrets["open_api_key"]
+google_api_key = st.secrets["gemini_api_key"]
 
 if not api_key:
     raise ValueError("OpenAI API key not found.")
 client = OpenAI(api_key=api_key)
 
-# Function to calculate API cost
-def calculate_api_cost(prompt_tokens, completion_tokens):
-    """Calculate the cost of the API call."""
-    cost_per_million_input = 0.150
-    cost_per_million_output = 0.600
+if not openai_api_key:
+    raise ValueError("OpenAI API key not found.")
+if not google_api_key:
+    raise ValueError("Google API key not found.")
 
-    # Calculate costs
-    input_cost = prompt_tokens * (cost_per_million_input / 1_000_000)
-    output_cost = completion_tokens * (cost_per_million_output / 1_000_000)
+# Initialize OpenAI client and configure Gemini
+openai_client = OpenAI(api_key=openai_api_key)
+genai.configure(api_key=google_api_key)
+
+# Function to calculate API cost
+def calculate_api_cost(prompt_tokens, completion_tokens, model):
+    """Calculate the cost of the API call based on the model used."""
+    # Model-specific costs per million tokens
+    costs = {
+        "gpt-4o-mini": {
+            "input": 0.150,
+            "output": 0.600
+        },
+        "gpt-4o": {
+            "input": 2.50,
+            "output": 10.00
+        },
+        "gemini-1.5-flash": {
+            "input": 0.35,
+            "output": 1.05
+        },
+        "gemini-1.5-pro": {
+            "input": 3.50,
+            "output": 10.50
+        }
+    }
+    
+    model_costs = costs[model]
+    input_cost = prompt_tokens * (model_costs["input"] / 1_000_000)
+    output_cost = completion_tokens * (model_costs["output"] / 1_000_000)
     total_cost = input_cost + output_cost
 
     return {
@@ -29,79 +56,128 @@ def calculate_api_cost(prompt_tokens, completion_tokens):
         "total_cost": total_cost
     }
 
-# Function to process the image with GPT-4o
-def process_image_with_gpt4o(image_base64, client, model):
-    """Process the uploaded image using GPT-4o API."""
+# Function to process the image with the selected model
+def process_image(image_base64, model):
+    """Process the uploaded image using the selected model."""
     try:
-        # First request: Extract text from image
-        response1 = client.chat.completions.create(
-            model=model,
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": "Izvuci tekst iz slike i ispiši ih."},
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:image/jpeg;base64,{image_base64}"
-                            }
-                        },
-                    ],
-                }
-            ],
-            max_tokens=10424,
-        )
-        extracted_text = response1.choices[0].message.content
+        if model in ["gpt-4o-mini", "gpt-4o"]:
+            client = openai_client
+            # First request: Extract text from image
+            response1 = client.chat.completions.create(
+                model=model,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": "Izvuci tekst iz slike i ispiši ih."},
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": f"data:image/jpeg;base64,{image_base64}"
+                                }
+                            },
+                        ],
+                    }
+                ],
+                max_tokens=10424,
+            )
+            extracted_text = response1.choices[0].message.content
 
-        # Display extracted text immediately
-        st.session_state.extracted_text = extracted_text
+            # Display extracted text immediately
+            st.session_state.extracted_text = extracted_text
 
-        # Second request: Validate the extracted text
-        response2 = client.chat.completions.create(
-            model=model,
-            messages=[
-                {
-                    "role": "user",
-                    "content": f"Je li ovo valjana polica osiguranja? {extracted_text}. Ako je valjana polica osiguranja, ispiši 'Dokument je valjan'. i nastavi s obradom podataka. ako nije valjana polica osiguranja, ispiši 'Polica nije valjana'. I prekini bradu podataka"
-                }
-            ],
-            max_tokens=10424,
-        )
-        validation_result = response2.choices[0].message.content
+            # Second request: Validate the extracted text
+            response2 = client.chat.completions.create(
+                model=model,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": f"Je li ovo polica osiguranja? {extracted_text}. Ako je korisnik uplodao policu osiguranja, ispiši SAMO 'Dokument je valjan'. i nastavi s obradom podataka. ako nije valjana polica osiguranja, ispiši SAMO 'Polica nije valjana'. I prekini bradu podataka"
+                    }
+                ],
+                max_tokens=10424,
+            )
+            validation_result = response2.choices[0].message.content
 
-        # Print validation result in the sidebar
-        st.sidebar.write("Validacija rezultata:")
-        st.sidebar.write(validation_result)
+            # Print validation result in the sidebar with larger font
+            st.sidebar.markdown(f"<h2 style='text-align: center; color: #1E88E5;'>{validation_result}</h2>", unsafe_allow_html=True)
 
-        if "Polica nije valjana" in validation_result:
-            return {"content": validation_result}
+            if "Polica nije valjana" in validation_result:
+                return {"content": validation_result}
 
-        # Third request: Extract important data in JSON format
-        response3 = client.chat.completions.create(
-            model=model,
-            messages=[
-                {
-                    "role": "user",
-                    "content": f"Izvuci najvažnije podatke u JSON formatu iz ovog teksta: {extracted_text}"
-                }
-            ],
-            max_tokens=10424,
-        )
-        important_data = response3.choices[0].message.content
+            # Third request: Extract important data in JSON format
+            response3 = client.chat.completions.create(
+                model=model,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": f"Izvuci najvažnije podatke u JSON formatu iz ovog teksta: {extracted_text}"
+                    }
+                ],
+                max_tokens=10424,
+            )
+            important_data = response3.choices[0].message.content
 
-        # Extract token usage details
-        token_usage = {
-            "prompt_tokens": response1.usage.prompt_tokens + response2.usage.prompt_tokens + response3.usage.prompt_tokens,
-            "completion_tokens": response1.usage.completion_tokens + response2.usage.completion_tokens + response3.usage.completion_tokens,
-            "total_tokens": response1.usage.total_tokens + response2.usage.total_tokens + response3.usage.total_tokens
-        }
+            # Extract token usage details
+            token_usage = {
+                "prompt_tokens": response1.usage.prompt_tokens + response2.usage.prompt_tokens + response3.usage.prompt_tokens,
+                "completion_tokens": response1.usage.completion_tokens + response2.usage.completion_tokens + response3.usage.completion_tokens,
+                "total_tokens": response1.usage.total_tokens + response2.usage.total_tokens + response3.usage.total_tokens
+            }
 
-        # Return response content and token usage
-        return {
-            "important_data": important_data,
-            "token_usage": token_usage
-        }
+            # Return response content and token usage
+            return {
+                "important_data": important_data,
+                "token_usage": token_usage
+            }
+        elif model in ["gemini-1.5-flash", "gemini-1.5-pro"]:
+            # Google model processing logic
+            model_client = genai.GenerativeModel(model)
+            
+            # First request: Extract text from image
+            response1 = model_client.generate_content([
+                {"mime_type": "image/jpeg", "data": image_base64},
+                "Extract all text from this image and only return the extracted text without any additional commentary."
+            ])
+            extracted_text = response1.text
+
+            # Second request: Validate the extracted text
+            response2 = model_client.generate_content(
+                f"Je li ovo valjana polica osiguranja? {extracted_text}. "
+                "Ako je korisnik poslao polica osiguranja, a ne neki drugi dokument ispiši SAMO 'Ovo je polica osiguranja'. "
+                "Ako korisnik nije uplodao polica osiguranja, nego neki drugi dokument ili neku sliku ispiši SAMO 'Ovo nije polica osiguranja'."
+            )
+            validation_result = response2.text
+
+            # Print validation result in the sidebar with larger font
+            st.sidebar.markdown(f"<h2 style='text-align: center; color: #1E88E5;'>{validation_result}</h2>", unsafe_allow_html=True)
+
+            # Display extracted text immediately
+            st.session_state.extracted_text = extracted_text
+
+            # Third request: Extract important data in JSON format
+            response3 = model_client.generate_content(
+                f"Extract and format the following information into valid JSON format: {extracted_text}. "
+                "Include only the JSON output without any additional text."
+            )
+            important_data = response3.text
+
+            # Calculate tokens - estimate input/output split since Gemini only gives total
+            total_tokens = len(extracted_text.split()) + len(validation_result.split()) + len(important_data.split())
+            estimated_input_tokens = int(total_tokens * 0.4)  # Estimate 40% input
+            estimated_output_tokens = int(total_tokens * 0.6)  # Estimate 60% output
+
+            # Calculate total tokens and return with response
+            token_usage = {
+                "prompt_tokens": estimated_input_tokens,
+                "completion_tokens": estimated_output_tokens,
+                "total_tokens": total_tokens
+            }
+
+            return {
+                "important_data": important_data,
+                "token_usage": token_usage
+            }
     except Exception as e:
         return {"error": str(e)}
 
@@ -122,13 +198,11 @@ def main():
     )
 
     # Title
-    st.title("Obrada police osiguranja")
+    st.title("OCR i obrada police osiguranja")
     
     # Sidebar for model selection and file upload
-    st.sidebar.title("Postavke")
-    model = st.sidebar.selectbox("Odaberi model", ["gpt-4o-mini", "gpt-4o"], index=0)
-    st.sidebar.title("Uplodaj sliku")
-    uploaded_file = st.sidebar.file_uploader("Uplodaj sliku police osiguranja...", type=["jpg", "jpeg", "png"])
+    model = st.sidebar.selectbox("Odaberi model", ["gpt-4o-mini", "gpt-4o", "gemini-1.5-flash", "gemini-1.5-pro"], index=0)
+    uploaded_file = st.sidebar.file_uploader("Uplodaj sliku police osiguranja", type=["jpg", "jpeg", "png"])
 
     if uploaded_file is not None:
         # Convert image to Base64
@@ -138,9 +212,9 @@ def main():
         # Split the main space into two columns
         col1, col2 = st.columns(2)
 
-        # Process the image using GPT-4o
+        # Process the image using the selected model
         with st.spinner("Obrada police.."):
-            result = process_image_with_gpt4o(image_base64, client, model)
+            result = process_image(image_base64, model)
 
         # Display the extracted text immediately
         if "extracted_text" in st.session_state:
@@ -158,12 +232,19 @@ def main():
                     st.write(result["important_data"])
         
         if "error" not in result and "token_usage" in result:
-            # Calculate and display cost
+            # Calculate and display cost using selected model
             token_usage = result["token_usage"]
-            cost = calculate_api_cost(token_usage["prompt_tokens"], token_usage["completion_tokens"])
-            st.sidebar.metric(label="Troškovi OpenAI API-a", value=f"${cost['total_cost']:.6f}")
-            st.sidebar.metric(label="Troškovi ulaznih tokena", value=f"${cost['input_cost']:.6f}")
-            st.sidebar.metric(label="Troškovi izlaznih tokena", value=f"${cost['output_cost']:.6f}")
+            cost = calculate_api_cost(
+                token_usage["prompt_tokens"], 
+                token_usage["completion_tokens"],
+                model
+            )
+            st.sidebar.metric(label=f"Troškovi {model}", value=f"${cost['total_cost']:.6f}", delta_color="off")
+
+            st.sidebar.metric(label="Troškovi obrade slike", value=f"${cost['input_cost']:.6f}", delta_color="off")
+
+            st.sidebar.metric(label="Troškovi ispisa podataka", value=f"${cost['output_cost']:.6f}", delta_color="off")
 
 if __name__ == "__main__":
     main()
+
