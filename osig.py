@@ -30,16 +30,17 @@ def calculate_api_cost(prompt_tokens, completion_tokens):
     }
 
 # Function to process the image with GPT-4o
-def process_image_with_gpt4o(image_base64, client):
-    """Process 2 the uploaded image using GPT-4o API."""
+def process_image_with_gpt4o(image_base64, client, model):
+    """Process the uploaded image using GPT-4o API."""
     try:
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
+        # First request: Extract text from image
+        response1 = client.chat.completions.create(
+            model=model,
             messages=[
                 {
                     "role": "user",
                     "content": [
-                        {"type": "text", "text": "Ti si stručnjak za osiguranja. Napravi sljedeće korake: 1. Glumi da si OCR i izvuci tekst iz slike. 2. Napiši u postotku s kojom sigurnošću je tekst točan. 3. Pročitaj tekst i provjeri da li je korisnik učitao policu osiguranja, a) ako se ne radi o polici osiguranja napiši 'Polica nije valjana' i prekinu izvođenje, b) ako se radi o polici osiguranja onda prikaži najvažnije podatke u JSON formatu."},
+                        {"type": "text", "text": "Izvuci tekst iz slike i ispiši ih."},
                         {
                             "type": "image_url",
                             "image_url": {
@@ -51,59 +52,118 @@ def process_image_with_gpt4o(image_base64, client):
             ],
             max_tokens=10424,
         )
-        # Extract the main response content
-        content = response.choices[0].message.content
+        extracted_text = response1.choices[0].message.content
+
+        # Display extracted text immediately
+        st.session_state.extracted_text = extracted_text
+
+        # Second request: Validate the extracted text
+        response2 = client.chat.completions.create(
+            model=model,
+            messages=[
+                {
+                    "role": "user",
+                    "content": f"Je li ovo valjana polica osiguranja? {extracted_text}. Ako je valjana polica osiguranja, ispiši 'Dokument je valjan'. i nastavi s obradom podataka. ako nije valjana polica osiguranja, ispiši 'Polica nije valjana'. I prekini bradu podataka"
+                }
+            ],
+            max_tokens=10424,
+        )
+        validation_result = response2.choices[0].message.content
+
+        # Print validation result in the sidebar
+        st.sidebar.write("Validacija rezultata:")
+        st.sidebar.write(validation_result)
+
+        if "Polica nije valjana" in validation_result:
+            return {"content": validation_result}
+
+        # Third request: Extract important data in JSON format
+        response3 = client.chat.completions.create(
+            model=model,
+            messages=[
+                {
+                    "role": "user",
+                    "content": f"Izvuci najvažnije podatke u JSON formatu iz ovog teksta: {extracted_text}"
+                }
+            ],
+            max_tokens=10424,
+        )
+        important_data = response3.choices[0].message.content
 
         # Extract token usage details
         token_usage = {
-            "prompt_tokens": response.usage.prompt_tokens,
-            "completion_tokens": response.usage.completion_tokens,
-            "total_tokens": response.usage.total_tokens
+            "prompt_tokens": response1.usage.prompt_tokens + response2.usage.prompt_tokens + response3.usage.prompt_tokens,
+            "completion_tokens": response1.usage.completion_tokens + response2.usage.completion_tokens + response3.usage.completion_tokens,
+            "total_tokens": response1.usage.total_tokens + response2.usage.total_tokens + response3.usage.total_tokens
         }
 
         # Return response content and token usage
         return {
-            "content": content,
+            "important_data": important_data,
             "token_usage": token_usage
         }
     except Exception as e:
         return {"error": str(e)}
 
 def main():
+    st.set_page_config(layout="wide")
+    st.markdown(
+        """
+        <style>
+        .main .block-container {
+            max-width: 90%;
+        }
+        .sidebar .sidebar-content {
+            width: 300px;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True
+    )
+
+    # Title
     st.title("Obrada police osiguranja")
     
-    # Upload an image
-    uploaded_file = st.file_uploader("Uplodaj sliku police osiguranja...", type=["jpg", "jpeg", "png"])
-    
+    # Sidebar for model selection and file upload
+    st.sidebar.title("Postavke")
+    model = st.sidebar.selectbox("Odaberi model", ["gpt-4o-mini", "gpt-4o"], index=0)
+    st.sidebar.title("Uplodaj sliku")
+    uploaded_file = st.sidebar.file_uploader("Uplodaj sliku police osiguranja...", type=["jpg", "jpeg", "png"])
+
     if uploaded_file is not None:
         # Convert image to Base64
         image_data = uploaded_file.read()
         image_base64 = base64.b64encode(image_data).decode("utf-8")
 
+        # Split the main space into two columns
+        col1, col2 = st.columns(2)
+
         # Process the image using GPT-4o
         with st.spinner("Obrada police.."):
-            result = process_image_with_gpt4o(image_base64, client)
+            result = process_image_with_gpt4o(image_base64, client, model)
+
+        # Display the extracted text immediately
+        if "extracted_text" in st.session_state:
+            with col1:
+                st.write("Izvučeni tekst:")
+                st.write(st.session_state.extracted_text)
 
         # Display the result
         if "error" in result:
             st.error(f"Error: {result['error']}")
         else:
-            st.write("Rezultat:")
-            st.write(result["content"])
-            
-            # Display token usage
-            token_usage = result["token_usage"]
-            st.write("\nToken Usage:")
-            st.write(f"Prompt Tokens: {token_usage['prompt_tokens']}")
-            st.write(f"Completion Tokens: {token_usage['completion_tokens']}")
-            st.write(f"Total Tokens: {token_usage['total_tokens']}")
-            
+            if "important_data" in result:
+                with col2:
+                    st.write("Podaci iz police u JSON formatu:")
+                    st.write(result["important_data"])
+        
+        if "error" not in result and "token_usage" in result:
             # Calculate and display cost
+            token_usage = result["token_usage"]
             cost = calculate_api_cost(token_usage["prompt_tokens"], token_usage["completion_tokens"])
-            st.write("\nTroškovi OpenAI API-a:")
-            st.write(f"Obrada slike: ${cost['input_cost']:.6f}")
-            st.write(f"Ispis rezultata: ${cost['output_cost']:.6f}")
-            st.write(f"Ukupni trošak: ${cost['total_cost']:.6f}")
+            st.sidebar.metric(label="Troškovi OpenAI API-a", value=f"${cost['total_cost']:.6f}")
+            st.sidebar.metric(label="Troškovi ulaznih tokena", value=f"${cost['input_cost']:.6f}")
+            st.sidebar.metric(label="Troškovi izlaznih tokena", value=f"${cost['output_cost']:.6f}")
 
 if __name__ == "__main__":
     main()
