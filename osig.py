@@ -31,7 +31,7 @@ def calculate_api_cost(prompt_tokens, completion_tokens):
 
 # Function to process the image with GPT-4o
 def process_image_with_gpt4o(image_base64, client):
-    """Process the uploaded image using GPT-4o API."""
+    """Process 2 the uploaded image using GPT-4o API."""
     try:
         response = client.chat.completions.create(
             model="gpt-4o-mini",
