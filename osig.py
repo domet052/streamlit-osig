@@ -6,7 +6,6 @@ import os
 import streamlit as st
 
 # Input your OpenAI API key and instantiate the client
-api_key = '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'
 if not api_key:
     raise ValueError("OpenAI API key not found.")
 client = OpenAI(api_key=api_key)
