@@ -1,9 +1,8 @@
 import base64
 from openai import OpenAI
-import pytesseract
 from PIL import Image
-import os
 import streamlit as st
+import google.generativeai as genai
 
 # Read the API key from Streamlit secrets
 openai_api_key = st.secrets["open_api_key"]
